@@ -1,0 +1,366 @@
+Nostr Integration into OpenRA Red Alert
+Executive Summary
+This document explores integrating Nostr protocol into OpenRA Red Alert to create a decentralized gaming identity and social layer while preserving the existing deterministic lockstep netcode for gameplay.
+
+Key Concept: Nostr handles identity, discovery, matchmaking, and stats. OpenRA's native netcode handles actual gameplay.
+
+🎯 Core Integration Concepts
+1. Identity Layer (NIP-07 + NIP-05)
+Login with Nostr
+Players login using browser extension (NIP-07) or provide nsec
+Profile fetched from relays (kind 0 events)
+Display name and profile picture shown in-game
+Implementation:
+Login Flow:
+1. Player launches OpenRA
+2. Prompt for NIP-07 extension or manual nsec entry
+3. Fetch profile metadata from relays
+4. Cache locally for offline play
+5. Display Nostr name/avatar in lobby and game UI
+Files to Modify:
+
+mods/ra/chrome/mainmenu.yaml - Add Nostr login UI
+New OpenRA.Mods.Common/Nostr/ - Nostr client library
+OpenRA.Game/Network/ - Identity integration
+2. Discovery & Matchmaking (NIP-05 + Custom Events)
+Finding Players
+Option A: NIP-05 Friend Discovery
+
+Players share their NIP-05 identifier (e.g., player@tigso.com)
+In-game friend system queries NIP-05 to find pubkeys
+See when friends are online and playing
+Option B: Relay-Based Lobby System
+
+Custom event kind (30078 or 31000-31999 range)
+Players publish "lobby presence" events to relays
+Events contain: game mode, map, players needed, server info
+{
+  "kind": 31001,
+  "content": "",
+  "tags": [
+    ["d", "openra-lobby"],
+    ["game", "red-alert"],
+    ["mode", "multiplayer"],
+    ["map", "Desert Storm"],
+    ["players", "2/4"],
+    ["server", "192.168.1.100:1234"],
+    ["status", "waiting"]
+  ]
+}
+Benefits:
+
+Decentralized lobby discovery
+No central master server required
+Players can filter by friends/relays
+Cross-region matchmaking
+3. Stats & Leaderboards (Custom Events)
+Personal Stats (Kind 30078 - Application Data)
+Store player stats as parameterized replaceable events:
+
+{
+  "kind": 30078,
+  "tags": [
+    ["d", "openra-ra-stats"],
+    ["wins", "127"],
+    ["losses", "43"],
+    ["w/l_ratio", "2.95"],
+    ["current_streak", "5"],
+    ["best_streak", "12"],
+    ["total_games", "170"],
+    ["favorite_faction", "soviet"],
+    ["last_updated", "1738155600"]
+  ]
+}
+Why Kind 30078?
+
+Parameterized replaceable = only latest version stored
+User controls their own stats
+Can be queried by any Nostr client
+Portable across OpenRA mods
+Global Leaderboards (Kind 31002 - Custom Leaderboard Events)
+{
+  "kind": 31002,
+  "content": "Match result",
+  "tags": [
+    ["d", "match-{uuid}"],
+    ["game", "red-alert"],
+    ["winner", "npub1..."],
+    ["loser", "npub2..."],
+    ["map", "Desert Storm"],
+    ["duration", "1847"],
+    ["timestamp", "1738155600"]
+  ]
+}
+Aggregation:
+
+Clients query relays for kind 31002 events
+Calculate leaderboards locally
+Verify match results via signatures
+Anti-cheat: require both players to sign match result
+🔧 Architecture Design
+Hybrid Approach: Nostr + OpenRA Netcode
+┌─────────────────────────────────────────┐
+│         Nostr Layer (Identity &         │
+│          Social Features)               │
+├─────────────────────────────────────────┤
+│  • Login/Profile (NIP-07, NIP-05)      │
+│  • Lobby Discovery (Custom Events)      │
+│  • Friend Lists (NIP-02)                │
+│  • Stats Storage (Kind 30078)           │
+│  • Match Results (Kind 31002)           │
+│  • Chat/Messaging (Kind 1, Kind 4)      │
+└─────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────┐
+│     OpenRA Native Netcode (Gameplay)    │
+├─────────────────────────────────────────┤
+│  • Deterministic Lockstep               │
+│  • Command Synchronization              │
+│  • Dedicated Server Support             │
+│  • LAN Play                             │
+└─────────────────────────────────────────┘
+Flow:
+
+Player logs in via Nostr → Identity established
+Browse lobbies via Nostr relays → Discover games
+Join game server using OpenRA's netcode → Play match
+Match ends → Stats published to Nostr
+💡 Specific Integration Ideas
+Idea 1: Nostr-Enhanced Server Browser
+Problem: OpenRA's master server list is centralized
+
+Solution:
+
+Servers publish availability to Nostr relays (kind 31001)
+Client queries multiple relays for active servers
+Includes server operator's Nostr profile
+Community reputation system via reactions (kind 7)
+User Experience:
+
+[Server Browser]
+┌───────────────────────────────────────────┐
+│ Desert Storm 2v2                          │
+│ Host: @tigso (⭐⭐⭐⭐⭐ 47 reactions)     │
+│ Players: 2/4 | Ping: 45ms                 │
+│ [Join Server]                             │
+└───────────────────────────────────────────┘
+Idea 2: Friend & Clan System
+Using NIP-02 (Contact Lists):
+
+Import Nostr follows as in-game friends
+See when friends are online in OpenRA
+Quick-join friend's games
+Private lobby invites via Nostr DMs (kind 4)
+Using NIP-51 (Lists):
+
+Create clans as categorized lists (kind 30001)
+Clan vs Clan matches
+Clan leaderboards
+Idea 3: Achievement & Badge System
+Using NIP-58 (Badges):
+
+Award badges for achievements
+"First Victory"
+"100 Wins"
+"Soviet Domination"
+"Allied Supremacy"
+Display badges on profile
+Badges signed by game server operators
+Portable across all Nostr apps
+Idea 4: Replay Sharing & Analysis
+Using Kind 1 (Notes) with File Upload:
+
+Share match replays to Nostr
+Community commentary via reactions/replies
+Top plays of the week
+Learning from pros
+Using NIP-94 (File Metadata):
+
+Attach replay files to events
+Tag with map, factions, players
+Searchable replay database
+Idea 5: Tournament System
+Using Custom Events (Kind 31003):
+
+{
+  "kind": 31003,
+  "content": "Weekly Red Alert Tournament",
+  "tags": [
+    ["d", "tournament-2026-01-29"],
+    ["type", "single-elimination"],
+    ["max_players", "16"],
+    ["entry_fee", "1000"],
+    ["prize_pool", "14000"],
+    ["start_time", "1738240800"]
+  ]
+}
+Features:
+
+Automated bracket generation
+Live score updates
+Zaps for prize pools (NIP-57)
+Spectator links
+Idea 6: NIP-05 Quick Join
+Simple User Experience:
+
+In-game command: /join @tigso
+→ Looks up tigso's NIP-05
+→ Checks for active game session
+→ Automatically connects to their server
+Implementation:
+
+Query tigso.com/.well-known/nostr.json
+Fetch pubkey
+Query relays for active game event with that pubkey
+Extract server IP/port
+Auto-connect
+Idea 7: Decentralized Chat
+Replace in-game chat with Nostr:
+
+Lobby chat = kind 42 (Channel Messages)
+DMs = kind 4 (Encrypted DMs)
+Voice chat coordination via presence events
+Benefits:
+
+Chat persists across sessions
+Access chat history from any Nostr client
+Cross-game communication
+🛠️ Technical Implementation Strategy
+Phase 1: Minimal Viable Integration
+Goal: Login with Nostr, display profile info
+
+Add Nostr library (e.g., C# port of nostr-tools)
+Create login screen with NIP-07 support
+Fetch and cache profile metadata
+Display Nostr name/avatar in UI
+Estimated Effort: 2-3 weeks
+
+Phase 2: Lobby Discovery
+Goal: Publish and discover games via relays
+
+Define custom event kinds
+Implement relay WebSocket connections
+Publish lobby presence on game creation
+Query relays for active lobbies
+Enhanced server browser UI
+Estimated Effort: 3-4 weeks
+
+Phase 3: Stats & Leaderboards
+Goal: Track and display player stats
+
+Define stats event schema (kind 30078)
+Update stats after each match
+Implement leaderboard queries
+Add stats UI to player profiles
+Estimated Effort: 2-3 weeks
+
+Phase 4: Social Features
+Goal: Friends, clans, achievements
+
+Import NIP-02 contacts
+Implement friend presence system
+Clan list support (NIP-51)
+Badge/achievement system (NIP-58)
+Estimated Effort: 4-6 weeks
+
+🎮 Why This Works
+Nostr Advantages:
+✅ Decentralized - No single point of failure
+✅ Censorship-resistant - Can't be shut down
+✅ Portable Identity - Use same identity across games
+✅ Existing Ecosystem - Leverage Nostr apps/relays
+✅ Built-in Payments - Zaps for tournaments/betting
+
+Preserving OpenRA Strengths:
+✅ Deterministic Netcode - No latency from Nostr
+✅ LAN Play - Still works offline
+✅ Low Bandwidth - Only social features use Nostr
+✅ Backward Compatible - Can still play without Nostr
+
+🚧 Challenges & Solutions
+Challenge 1: Cheat Prevention
+Problem: Players could fake their stats
+
+Solutions:
+
+Require both players to sign match results
+Dedicated servers can act as witnesses
+Community reputation via reactions
+ELO-style ranking considers source trust
+Challenge 2: Relay Availability
+Problem: What if relays are down?
+
+Solutions:
+
+Multi-relay redundancy
+Fallback to OpenRA's master server
+Local LAN discovery still works
+Cache recent data locally
+Challenge 3: Key Management
+Problem: Players might lose nsec
+
+Solutions:
+
+Educate about backups
+Support read-only mode with npub
+Link multiple keys to one profile
+Recovery via NIP-05 domain
+📊 Use Cases
+Use Case 1: Casual Player
+Logs in with Nostr extension
+Sees friends online
+Joins friend's game with /join @friend
+Plays match using OpenRA netcode
+Stats automatically updated
+Use Case 2: Competitive Player
+Checks global leaderboard (from Nostr)
+Joins ranked lobby
+Plays match
+Both players sign result
+ELO updated on Nostr
+Shares replay to Nostr
+Use Case 3: Tournament Organizer
+Creates tournament event (kind 31003)
+Players register via reactions
+Brackets generated automatically
+Match results published in real-time
+Winners receive zaps
+🔮 Future Possibilities
+Advanced Features:
+AI Training Data: Publish anonymized replays for AI analysis
+Betting Markets: Prediction markets on matches (NIP-57)
+NFT Skins: Nostr-based asset ownership
+Cross-Game Identity: Same profile for all RTS games
+DAO Governance: Vote on game rule changes via Nostr polls
+📝 Next Steps
+To Prototype:
+Set up Nostr relay for testing
+Create C# Nostr client library
+Build proof-of-concept login screen
+Test profile fetching
+Define event schemas for lobbies/stats
+Questions to Resolve:
+Which relays to use as defaults?
+Custom relay for OpenRA-specific events?
+Event kind numbering coordination
+Integration with existing OpenRA auth?
+🔗 Related NIPs
+NIP-01: Basic protocol
+NIP-02: Contact lists (friends)
+NIP-04: Encrypted DMs
+NIP-05: DNS identifiers
+NIP-07: Browser extension auth
+NIP-42: Relay authentication
+NIP-51: Lists (clans)
+NIP-57: Zaps (payments)
+NIP-58: Badges
+NIP-78: Application data
+NIP-94: File metadata
+Summary
+This integration creates a best-of-both-worlds scenario:
+
+Nostr provides decentralized identity, discovery, and social features
+OpenRA's proven netcode handles actual gameplay
+Players get a portable gaming identity across the ecosystem
+Community can build additional tools using public Nostr data
+The key insight: Use Nostr for everything AROUND the game, not the game itself.
